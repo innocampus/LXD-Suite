@@ -1,0 +1,47 @@
+#!/bin/bash
+#
+# quota script for lxd containers with lvm storage
+#
+# lxc-quota <size> <container>
+#
+# Bsp:
+# lxc-quota 30G testcont
+#
+# Autor: Henryk Iwaniuk
+
+if [ "$#" -ne 3 ]; then
+	echo "usage: lxc-quota <size> <container>"
+	exit 1;
+fi
+
+CONT=$2
+SIZE=$1
+
+c_exists=$(lxc list | awk -v cont=$CONT '($2==cont) {print $2}')
+
+if [ -z "$c_exists" ]; then
+	echo "container $CONT not found. exit."
+	exit 13
+fi
+
+
+lxc stop $CONT
+
+lvextend -L $SIZE "/dev/lxd/containers_$CONT"
+if [ $? -ne 0 ]; then
+	echo "lvextend failed. exit."
+	exit 15
+fi
+
+e2fsck -f "/dev/lxd/containers_$CONT"
+if [ $? -ne 0 ]; then
+	echo "e2fsck failed. note that lv and fs size might be mismatched. exit."
+	exit 17
+fi
+
+resize2fs "/dev/lxd/containers_$CONT"
+if [ $? -ne 0 ]; then
+	echo "filesystem resize failed. note that lv and fs size might be mismatched. exit."
+	exit 666
+fi
+
