@@ -1,47 +1,76 @@
 #!/bin/bash
 #
-# quota script for lxd containers with lvm storage
-#
-# lxc-quota <size> <container>
-#
-# Bsp:
-# lxc-quota 30G testcont
-#
 # Autor: Henryk Iwaniuk
 
-if [ "$#" -ne 3 ]; then
-	echo "usage: lxc-quota <size> <container>"
-	exit 1;
-fi
 
-CONT=$2
-SIZE=$1
+# Usage info
+show_help () {
+cat << EOF
+Usage: ${0##*/} <size> <container>
+quota script for lxd containers with lvm storage
 
-c_exists=$(lxc list | awk -v cont=$CONT '($2==cont) {print $2}')
+Example:
+    ${0##*/} 20GB guest99
+EOF
+}
 
-if [ -z "$c_exists" ]; then
-	echo "container $CONT not found. exit."
-	exit 13
-fi
+die () {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
 
+container=
+size=
 
-lxc stop $CONT
+while :; do
+    case $1 in
+        -h|-\?|--help)
+            show_help    # Print Usage
+            exit
+            ;;
+        $1)
+            if [ "$2" ]; then
+                container=$2
+                size=$1
+            else
+                die 'ERROR: <size> and <container> arguments expected'
+            fi
+            break
+            ;;
+        -?*)
+            printf 'WARN: Unknown option (ignored): %s\n' "$1" >&2
+            ;;
+        *)
+            break
+    esac
 
-lvextend -L $SIZE "/dev/lxd/containers_$CONT"
+    shift
+done
+
+container_exists () {
+	c_exists=$(lxc list $1 | awk -v cont=$1 '($2==cont) {print $2}')
+	if [ -z "$c_exists" ]; then
+		die 'container does not exist';
+	fi
+	return 1;
+}
+
+container_exists $container
+
+lvextend -L $size "/dev/lxc/containers_$container"
 if [ $? -ne 0 ]; then
-	echo "lvextend failed. exit."
-	exit 15
+        echo "lvextend failed. exit."
+        exit 15
 fi
 
-e2fsck -f "/dev/lxd/containers_$CONT"
+e2fsck -f "/dev/lxc/containers_$container"
+#if [ $? -ne 0 ]; then
+#       echo "e2fsck failed. note that lv and fs size might be mismatched. exit."
+#       exit 17
+
+
+resize2fs "/dev/lxc/containers_$container"
 if [ $? -ne 0 ]; then
-	echo "e2fsck failed. note that lv and fs size might be mismatched. exit."
-	exit 17
+        echo "filesystem resize failed. note that lv and fs size might be mismatched. exit."
+        exit 666
 fi
-
-resize2fs "/dev/lxd/containers_$CONT"
-if [ $? -ne 0 ]; then
-	echo "filesystem resize failed. note that lv and fs size might be mismatched. exit."
-	exit 666
-fi
-
