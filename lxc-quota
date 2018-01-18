@@ -21,6 +21,7 @@ die () {
 
 container=
 size=
+lvm_block=
 
 while :; do
     case $1 in
@@ -57,20 +58,24 @@ container_exists () {
 
 container_exists $container
 
-lvextend -L $size "/dev/lxc/containers_$container"
+set_lvm_block () {
+    lvm_block="/dev/lxc/containers_$container"
+}
+
+set_lvm_block;
+
+lvextend -L $size $lvm_block
 if [ $? -ne 0 ]; then
-        echo "lvextend failed. exit."
-        exit 15
+        die "lvextend failed. exit."
 fi
 
-e2fsck -f "/dev/lxc/containers_$container"
+e2fsck -f $lvm_block
 #if [ $? -ne 0 ]; then
 #       echo "e2fsck failed. note that lv and fs size might be mismatched. exit."
 #       exit 17
 
 
-resize2fs "/dev/lxc/containers_$container"
+resize2fs $lvm_block
 if [ $? -ne 0 ]; then
-        echo "filesystem resize failed. note that lv and fs size might be mismatched. exit."
-        exit 666
+        die "filesystem resize failed. note that lv and fs size might be mismatched. exit."
 fi
