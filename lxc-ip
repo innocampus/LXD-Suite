@@ -1,14 +1,27 @@
 #!/bin/bash
 #
-# script for adding a network with public ip to a container 
-# and automatically configuring the network inside the container.
-#
-# lxc-ip set [remote:]<container> <ip>
-# lxc-ip unset [remote:]<container>
-#
 # Autor: Henryk Iwaniuk
 
+
 IP_REGEX="^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+
+
+# Usage info
+show_help () {
+cat << EOF
+Usage: ${0##*/} <command> [options]
+add a public ip to a container and automatically configure the network inside the container.
+
+Commands:
+    set [remote:]<container> <ip>           Set the global ip of a container
+    unset [remote:]<container>              Remove public ip configured with set command
+EOF
+}
+
+die () {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
 
 mode=""
 container=""
@@ -19,24 +32,47 @@ brname=""
 id=""
 iface_def=""
 
-set_iface_def () {
-	iface_def=$(cat <<-END
-	auto lxbr
-	iface lxbr inet static
-	    address $ip
-	    netmask 255.255.255.0
-	    gateway 10.10.$id.1
-	    pre-up ip -4 link set dev lxbr up
-	    pre-up ip -4 route add dev lxbr 10.10.$id.1/32
-	END
-	)
-}
+while :; do
+    case $1 in
+        -h|-\?|--help)
+            show_help    # Print Usage
+            exit
+            ;;
+        set)
+            mode="set";
+            if [ "$2" ]; then
+                container=$2
+                if [ "$3" ]; then
+                    ip=$3
+                    shift
+                else
+                    die 'ERROR: "set" requires an <ip> argument.'
+                fi
+                shift
+            else
+                die 'ERROR: "set" requires <container> and <ip> arguments.'
+            fi
+            break
+            ;;
+        unset)
+            mode="unset";
+            if [ "$2" ]; then
+                container=$2
+                shift
+            else
+                die 'ERROR: "unset" requires a <container> argument.'
+            fi
+            break
+            ;;
+        -?*)
+            printf 'WARN: Unknown option (ignored): %s\n' "$1" >&2
+            ;;
+        *)
+            break
+    esac
 
-print_usage () {
-	echo "usage:";
-	echo "	lxc-ip set <container> <ip>";
-	echo "	lxc-ip unset <container>";
-}
+    shift
+done
 
 container_exists () {
 	c_exists=$(lxc list $2 | awk -v cont=$1 '($2==cont) {print $2}')
@@ -69,16 +105,17 @@ attach_network () {
 	lxc network attach $remote$brname $container_name bridge lxbr
 }
 
-process_input () {
-	if [ "$1" == "set" ]
-	then
-		process_set $2 $3;
-	elif [ "$1" == "unset" ]
-	then
-		process_unset $2;
-	else
-		print_usage;
-	fi
+set_iface_def () {
+	iface_def=$(cat <<-END
+	auto lxbr
+	iface lxbr inet static
+	    address $ip
+	    netmask 255.255.255.0
+	    gateway 10.10.$id.1
+	    pre-up ip -4 link set dev lxbr up
+	    pre-up ip -4 route add dev lxbr 10.10.$id.1/32
+	END
+	)
 }
 
 push_iface_def_to_container () {
@@ -97,6 +134,22 @@ activate_network () {
 	lxc exec $remote$container_name systemctl restart networking
 }
 
+process_set () {
+	container_name=$(echo "$container" | grep -oE "[^:]+$");
+	remote=$(echo "$container" | grep -oE "^[^:]+:");
+	container_exists $container_name $remote;
+	brname="lxdbr-$container_name"
+	ip_is_valid $ip;
+	id=$(echo "$ip" | grep -oE "[^.]+$");
+
+	create_network;
+	attach_network;
+	set_iface_def;
+	push_iface_def_to_container;
+	activate_interfaces_d;
+	activate_network;
+}
+
 detach_bridge () {
 	lxc network detach $remote$brname $container_name
 }
@@ -109,32 +162,7 @@ delete_iface_def_from_container () {
 	lxc file delete $container/etc/network/interfaces.d/lxbr
 }
 
-process_set () {
-	echo "set";
-	mode="set";
-	container=$1;
-	container_name=$(echo "$container" | grep -oE "[^:]+$");
-	remote=$(echo "$container" | grep -oE "^[^:]+:");
-	container_exists $container_name $remote;
-	brname="lxdbr-$container_name"
-	ip_is_valid $2;
-	ip="$2";
-	id=$(echo "$ip" | grep -oE "[^.]+$");
-
-	#print_all;
-	create_network;
-	attach_network;
-	set_iface_def;
-	push_iface_def_to_container;
-	activate_interfaces_d;
-	activate_network;
-	# print_all;
-}
-
 process_unset () {
-	echo "unset";
-	mode="unset";
-	container=$1;
 	container_name=$(echo "$container" | grep -oE "[^:]+$");
 	remote=$(echo "$container" | grep -oE "^[^:]+:");
 	container_exists $container_name $remote;
@@ -157,5 +185,8 @@ print_all () {
 	#echo "$iface_def"
 }
 
-process_input $1 $2 $3;
-
+if [ "$mode" == "set" ]; then
+    process_set
+else
+    process_unset
+fi
