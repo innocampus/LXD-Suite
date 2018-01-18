@@ -77,8 +77,7 @@ done
 container_exists () {
 	c_exists=$(lxc list $2 | awk -v cont=$1 '($2==cont) {print $2}')
 	if [ -z "$c_exists" ]; then
-		echo "container $1 does not exist";
-		exit 13;
+		die 'container does not exist';
 	fi
 	return 1;
 }
@@ -87,8 +86,7 @@ ip_is_valid () {
 	if [[ "$1" =~ $IP_REGEX ]]; then
 		return 1;
 	else
-		echo "Invalid ip";
-		exit 255;
+		die 'Invalid ip';
 	fi
 }
 
@@ -170,19 +168,6 @@ process_unset () {
 	detach_bridge;
 	delete_bridge;
 	delete_iface_def_from_container;
-}
-
-print_all () {
-	echo "*** print all ***";
-	echo "mode: $mode";
-	echo "containier: $container";
-	echo "brname: $brname";
-	echo "ip: $ip";
-	echo "id: $id";
-	echo "name: $container_name";
-	echo "remote: $remote";
-	#echo "iface def:";
-	#echo "$iface_def"
 }
 
 if [ "$mode" == "set" ]; then
