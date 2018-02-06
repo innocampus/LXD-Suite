@@ -5,6 +5,10 @@
 
 IP_REGEX="^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
 
+NETMASK=""
+GATEWAY=""
+NAMESERVER=""
+
 
 # Usage info
 show_help () {
@@ -28,9 +32,11 @@ container=""
 container_name=""  # container without <remote>:
 remote=""
 ip=""
-brname=""
+service_name=""
+iface_name=""
 id=""
 iface_def=""
+unit_def=""
 
 while :; do
     case $1 in
@@ -90,35 +96,56 @@ ip_is_valid () {
 	fi
 }
 
-create_network () {
-	lxc network create $remote$brname ipv4.address=10.10."$id".1/24 ipv6.address=none ipv4.nat="true" ipv4.dhcp="true" ipv4.routing="true" ipv4.routes="$ip"
-	if [ $? -ne 0 ]
-	then
-		echo "creating the network failed.";
-		exit 999;
-	fi
-}
-
-attach_network () {
-	lxc network attach $remote$brname $container_name bridge lxbr
-}
-
 set_iface_def () {
 	iface_def=$(cat <<-END
-	auto lxbr
-	iface lxbr inet static
-	    address $ip
-	    netmask 255.255.255.0
-	    gateway 10.10.$id.1
-	    pre-up ip -4 link set dev lxbr up
-	    pre-up ip -4 route add dev lxbr 10.10.$id.1/32
+    auto eth0
+    iface eth0 inet static
+        address $ip
+        netmask $NETMASK
+        gateway $GATEWAY
+        dns-nameservers $NAMESERVER
 	END
 	)
 }
 
+set_unit_def () {
+	unit_def=$(cat <<-END
+        [Unit]
+        Description="Unit for starting network interface required by a lxd container"
+        After=sys-subsystem-net-devices-bond0.device
+        Before=lxd-containers.service
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=True
+        ExecStart=/bin/bash -c "/sbin/ip link add $iface_name link bond0 type ipvlan mode l2"
+        ExecStop=/bin/bash -c "/sbin/ip link del $iface_name"
+
+        [Install]
+        #WantedBy=sys-subsystem-net-devices-bond0.device
+        WantedBy=multi-user.target
+	END
+	)
+}
+
+create_unit_file () {
+    echo "$unit_def" > "/etc/systemd/system/$service_name"
+    systemctl daemon-reload
+}
+
+activate_unit () {
+    systemctl enable $service_name;
+    systemctl start $service_name;
+}
+
+attach_iface_to_container () {
+    lxc config device add $container_name eth0 nic name=eth0 nictype=physical parent=$iface_name
+}
+
 push_iface_def_to_container () {
 	echo "$iface_def" > iface_dev.tmp
-	lxc file push ./iface_dev.tmp $remote$container_name/etc/network/interfaces.d/lxbr
+	lxc file push ./iface_dev.tmp $remote$container_name/etc/network/interfaces.d/lxd-net
+	rm iface_dev.tmp
 }
 
 activate_interfaces_d () {
@@ -136,38 +163,45 @@ process_set () {
 	container_name=$(echo "$container" | grep -oE "[^:]+$");
 	remote=$(echo "$container" | grep -oE "^[^:]+:");
 	container_exists $container_name $remote;
-	brname="lxdbr-$container_name"
+	service_name="lxd-net-$container_name.service"
+	iface_name="lxd-$container_name"
 	ip_is_valid $ip;
 	id=$(echo "$ip" | grep -oE "[^.]+$");
 
-	create_network;
-	attach_network;
 	set_iface_def;
+	set_unit_def;
+	create_unit_file;
+	activate_unit;
+	attach_iface_to_container;
 	push_iface_def_to_container;
 	activate_interfaces_d;
+	sleep 1;
 	activate_network;
 }
 
-detach_bridge () {
-	lxc network detach $remote$brname $container_name
-}
-
-delete_bridge () {
-	lxc network delete $remote$brname
-}
-
 delete_iface_def_from_container () {
-	lxc file delete $container/etc/network/interfaces.d/lxbr
+	lxc file delete $container/etc/network/interfaces.d/lxd-net
+}
+
+remove_iface_from_config () {
+    lxc config device remove $container eth0
+    lxc exec $container systemctl restart networking
+}
+
+disable_and_remove_unit () {
+    systemctl stop $service_name;
+    systemctl disable $service_name;
+    rm "/etc/systemd/system/$service_name"
 }
 
 process_unset () {
 	container_name=$(echo "$container" | grep -oE "[^:]+$");
 	remote=$(echo "$container" | grep -oE "^[^:]+:");
 	container_exists $container_name $remote;
-	brname="lxdbr-$container_name";
-	detach_bridge;
-	delete_bridge;
+	service_name="lxd-net-$container_name.service";
 	delete_iface_def_from_container;
+	remove_iface_from_config;
+	disable_and_remove_unit;
 }
 
 if [ "$mode" == "set" ]; then
