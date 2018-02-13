@@ -22,7 +22,9 @@ die () {
 container=
 size=
 lvm_block=
-type="ext";
+type="xfs";
+mountpoint=
+online=0
 
 while :; do
     case $1 in
@@ -37,11 +39,13 @@ while :; do
             type=$2
             shift
             ;;
+        -o|--online)
+            online=1;
+            ;;
         $1)
             if [ -z "$1" ]; then
                 break;
             fi
-            printf "$1 xx $2";
             if [ -z "$2" ]; then
                 die 'ERROR: <size> and <container> arguments expected'
             fi
@@ -59,15 +63,31 @@ while :; do
     shift
 done
 
+confirm () {
+    printf "$1\n";
+    read -r -p "Are you sure? [y/N] " response
+    case "$response" in
+        [yY][eE][sS]|[yY])
+            return 1;
+            ;;
+        *)
+            die "exit";
+            ;;
+    esac
+}
+
 resize_ext () {
     resize2fs $lvm_block
     if [ $? -ne 0 ]; then
-            die "filesystem resize failed. note that lv and fs size might be mismatched. exit."
+            die "ext filesystem resize failed. note that lv and fs size might be mismatched. exit."
     fi
 }
 
 resize_xfs () {
-    printf "todo"
+    xfs_growfs $mountpoint
+    if [ $? -ne 0 ]; then
+            die "xfs filesystem resize failed. note that lv and fs size might be mismatched. exit."
+    fi
 }
 
 container_exists () {
@@ -78,26 +98,49 @@ container_exists () {
 	return 1;
 }
 
-container_exists $container;
-
 set_lvm_block () {
     lvm_block="/dev/lxc/containers_$container"
 }
 
-set_lvm_block;
+set_mountpoint () {
+    mountpoint="/var/lib/lxd/storage-pools/lxc/containers/$container"
+}
 
-lvextend -L $size $lvm_block
-if [ $? -ne 0 ]; then
-        die "lvextend failed. exit."
-fi
+container_set_size () {
+    printf "trying to set a new root device\n";
+    lxc config device add $container root disk pool=lxc path=/ size=$size
+    if [ $? -ne 0 ]; then
+            printf "trying to change existing root device instead\n";
+            lxc config device set $container root size $size
+    fi
+}
 
-e2fsck -f $lvm_block
-#if [ $? -ne 0 ]; then
-#       echo "e2fsck failed. note that lv and fs size might be mismatched. exit."
-#       exit 17
+update_container_config () {
+    container_set_size;
+    lxc config unset $container volatile.apply_quota
+}
 
-if [ "$type" == "ext" ]; then
-    resize_ext;
-elif [ "$type" == "xfs" ]; then
-    resize_xfs;
+container_restart () {
+    lxc restart $container;
+}
+
+container_exists $container;
+
+if [ "$online" -eq "0" ]; then
+    confirm "This will restart the container.";
+    container_set_size;
+    container_restart;
+else
+    set_lvm_block;
+    set_mountpoint;
+
+    lvextend -L $size $lvm_block
+    update_container_config;
+    e2fsck -f $lvm_block
+
+    if [ "$type" == "ext" ]; then
+        resize_ext;
+    elif [ "$type" == "xfs" ]; then
+        resize_xfs;
+    fi
 fi
