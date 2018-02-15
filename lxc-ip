@@ -48,7 +48,7 @@ while :; do
             show_help    # Print Usage
             exit
             ;;
-        -l|--host)
+        -l|--host-only)
             only_host=1;
             printf "only host\n";
             ;;
@@ -56,11 +56,13 @@ while :; do
             mode="set";
             if [ "$2" ]; then
                 container=$2
-                if [ "$3" ]; then
-                    ip=$3
-                    shift
-                else
-                    die 'ERROR: "set" requires an <ip> argument.'
+                if [ "$only_host" -eq "0" ]; then
+                    if [ "$3" ]; then
+                        ip=$3
+                        shift
+                    else
+                        die 'ERROR: "set" requires an <ip> argument.'
+                    fi
                 fi
                 shift
             else
@@ -173,8 +175,11 @@ process_set () {
 	container_exists $container_name $remote;
 	service_name="lxd-net-$container_name.service"
 	iface_name="lxd-$container_name"
-	ip_is_valid $ip;
-	id=$(echo "$ip" | grep -oE "[^.]+$");
+
+	if [ "$only_host" -eq "0" ]; then
+	    ip_is_valid $ip;
+	    id=$(echo "$ip" | grep -oE "[^.]+$");
+	fi
 
     set_unit_def;
 	create_unit_file;
@@ -206,13 +211,19 @@ disable_and_remove_unit () {
 }
 
 process_unset () {
-	container_name=$(echo "$container" | grep -oE "[^:]+$");
-	remote=$(echo "$container" | grep -oE "^[^:]+:");
-	container_exists $container_name $remote;
-	service_name="lxd-net-$container_name.service";
-	delete_iface_def_from_container;
-	remove_iface_from_config;
-	disable_and_remove_unit;
+    if [ "$only_host" -eq "0" ]; then
+        container_name=$(echo "$container" | grep -oE "[^:]+$");
+        remote=$(echo "$container" | grep -oE "^[^:]+:");
+        container_exists $container_name $remote;
+        service_name="lxd-net-$container_name.service";
+        delete_iface_def_from_container;
+        remove_iface_from_config;
+        disable_and_remove_unit;
+    else
+        container_name=$(echo "$container" | grep -oE "[^:]+$");
+        service_name="lxd-net-$container_name.service";
+        disable_and_remove_unit;
+    fi
 }
 
 if [ "$mode" == "set" ]; then
