@@ -16,7 +16,8 @@ OPTIONS
 	print a help message and exit.
 
 -l, --host-only
-	only configure the host, assume an interface by the name lxd-guest21 is already assigned to the container.
+	only configure the host, assume an interface by the name lxd-<container>
+	is already assigned to the container.
 ```
 
 ### lxc-quota
@@ -33,6 +34,7 @@ OPTIONS
 	default "xfs", also supports "ext4". Filesystem used by the container
 
 -o, --online
-	two modes are supported. default uses lxd's quota implementation, which requires the container to restart. 
+	two modes are supported. default uses lxd's quota implementation, which 
+	requires the container to restart. 
 	online mode does not require the container to restart but might be more risky.
 ```
