@@ -5,10 +5,13 @@
 
 IP_REGEX="^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
 
-NETMASK=""
-GATEWAY=""
-NAMESERVER=""
+NETMASK_DEFAULT="255.255.255.0"
+GATEWAY_DEFAULT="192.168.0.1"
+NAMESERVER_DEFAULT="192.168.0.1"
 
+NETMASK=${LXD_GUEST_NETMASK:-NETMASK_DEFAULT}
+GATEWAY=${LXD_GUEST_GATEWAY:-GATEWAY_DEFAULT}
+NAMESERVER=${LXD_GUEST_NAMESERVER:-NAMESERVER_DEFAULT}
 
 # Usage info
 show_help () {
@@ -37,12 +40,17 @@ iface_name=""
 id=""
 iface_def=""
 unit_def=""
+only_host=0
 
 while :; do
     case $1 in
         -h|-\?|--help)
             show_help    # Print Usage
             exit
+            ;;
+        -l|--host)
+            only_host=1;
+            printf "only host\n";
             ;;
         set)
             mode="set";
@@ -168,15 +176,18 @@ process_set () {
 	ip_is_valid $ip;
 	id=$(echo "$ip" | grep -oE "[^.]+$");
 
-	set_iface_def;
-	set_unit_def;
+    set_unit_def;
 	create_unit_file;
 	activate_unit;
-	attach_iface_to_container;
-	push_iface_def_to_container;
-	activate_interfaces_d;
-	sleep 1;
-	activate_network;
+
+	if [ "$only_host" -eq "0" ]; then
+        set_iface_def;
+        attach_iface_to_container;
+        push_iface_def_to_container;
+        activate_interfaces_d;
+        sleep 1;
+        activate_network;
+    fi
 }
 
 delete_iface_def_from_container () {
