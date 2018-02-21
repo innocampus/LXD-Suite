@@ -1,0 +1,97 @@
+#!/bin/bash
+#
+# Autor: Henryk Iwaniuk
+
+# TODO tar allow relative path
+# TODO create individual mount points to allow parallel runs with different containers
+# TODO allow changing name and ip on restore
+
+
+# Usage info
+show_help () {
+cat << EOF
+Usage: ${0##*/} <tar-file> <container-name>
+restores container from tar.gz
+
+Example:
+    ${0##*/} container1_backup_full.tar.gz container1
+EOF
+}
+
+container=
+size=
+tar_file=
+
+while :; do
+    case $1 in
+        -h|-\?|--help)
+            show_help    # Print Usage
+            exit
+            ;;
+        $1)
+            if [ -z "$1" ]; then
+                break;
+            fi
+            if [ -z "$2" ]; then
+                die 'ERROR: <tar-file> and <container-name> arguments expected'
+            fi
+            container=$2
+            tar_file=$1
+            shift
+            ;;
+        -?*)
+            printf 'WARN: Unknown option (ignored): %s\n' "$1" >&2
+            ;;
+        *)
+            ;;
+    esac
+
+    shift
+done
+
+
+get_size () {
+    tar -zxvf "$tar_file" ./backup.yaml
+    size=$(cat backup.yaml | grep root -A 10 | grep "GB" | tail -1 | awk -F " " '{print $2}')
+}
+
+create_lv () {
+    lvcreate --thin lxc/LXDThinpool -V "$size" -n "containers_"$container"_restore"
+}
+
+fill_lv () {
+    mkfs.xfs "/dev/lxc/containers_"$container"_restore"
+    mkdir /tmp/restore_mount
+    mount "/dev/lxc/containers_"$container"_restore" /tmp/restore_mount
+    cd /tmp/restore_mount
+    printf "extracting tarball. this might take a while..."
+    tar -xf "$tar_file"
+    cd ../
+    umount /tmp/restore_mount
+}
+
+prepare_env () {
+    mkdir "/var/lib/lxd/storage-pools/lxc/containers/$container"
+    mount /dev/lxc/containers_guest21_restore /var/lib/lxd/storage-pools/lxc/containers/guest21
+}
+
+lxd_import () {
+    lxd import "$container"
+}
+
+post_import () {
+    lvrename "/dev/lxc/containers_"$container"_restore" "/dev/lxc/containers_$container"
+    ln -s "/var/lib/lxd/storage-pools/lxc/containers/$container" "/var/lib/lxd/containers/$container"
+    lxc-ip -l set "$container"
+}
+
+main () {
+    get_size
+    create_lv
+    fill_lv
+    prepare_env
+    lxd_import
+    post_import
+}
+
+main
