@@ -1,7 +1,7 @@
 # LXD-Suite
 LXD Management Scripts
 
-** Warning: these scripts only works with lvm storage, where the VG is named lxc-$hostname **
+__Warning: these scripts only works with lvm storage, where the VG is named lxc-$hostname__
 
 ### Installing
 put the scripts somewhere in your $PATH (e.g. /usr/local/bin) and make them executable.
@@ -46,7 +46,7 @@ script for dumping container to a gzip compressed tar archive.
 
 ```
 lxc-dump <container> [path]
-*if no path given, the file will be dumped to the current location*
+- if no path given, the file will be dumped to the current location
 ```
 
 ### lxc-restore
@@ -54,7 +54,7 @@ script for restoring container from a tar archive.
 
 ```
 lxc-restore <tar file> <name>
-*depends on the lxc-ip tool*
+-depends on the lxc-ip tool
 
 OPTIONS
 -h, -?, --help
@@ -66,8 +66,8 @@ script for migrating a lxd container to a different lxd host.
 
 ```
 lxc-migrate <container_name> <remote host in ssh notation>
-*on host, depends on: lxc-dump*
-*on remote, depends on: lxc-ip, lxc-restore*
+- on host, depends on: lxc-dump
+- on remote, depends on: lxc-ip, lxc-restore
 ```
 
 
