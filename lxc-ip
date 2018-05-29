@@ -9,9 +9,11 @@ NETMASK_DEFAULT="255.255.255.0"
 GATEWAY_DEFAULT="192.168.0.1"
 NAMESERVER_DEFAULT="192.168.0.1"
 
-NETMASK=${LXD_GUEST_NETMASK:-NETMASK_DEFAULT}
-GATEWAY=${LXD_GUEST_GATEWAY:-GATEWAY_DEFAULT}
-NAMESERVER=${LXD_GUEST_NAMESERVER:-NAMESERVER_DEFAULT}
+PARENT_DEVICE=${LXD_NETWORK_PARENT:-bond0}
+
+NETMASK=${LXD_GUEST_NETMASK:-$NETMASK_DEFAULT}
+GATEWAY=${LXD_GUEST_GATEWAY:-$GATEWAY_DEFAULT}
+NAMESERVER=${LXD_GUEST_NAMESERVER:-$NAMESERVER_DEFAULT}
 
 # Usage info
 show_help () {
@@ -48,9 +50,8 @@ while :; do
             show_help    # Print Usage
             exit
             ;;
-        -l|--host-only)
+        -l|--host)
             only_host=1;
-            printf "only host\n";
             ;;
         set)
             mode="set";
@@ -122,17 +123,17 @@ set_unit_def () {
 	unit_def=$(cat <<-END
         [Unit]
         Description="Unit for starting network interface required by a lxd container"
-        After=sys-subsystem-net-devices-bond0.device
+        After=sys-subsystem-net-devices-$PARENT_DEVICE.device
         Before=lxd-containers.service
 
         [Service]
         Type=oneshot
         RemainAfterExit=True
-        ExecStart=/bin/bash -c "/sbin/ip link add $iface_name link bond0 type ipvlan mode l2"
+        ExecStart=/bin/bash -c "/sbin/ip link add $iface_name link $PARENT_DEVICE type ipvlan mode l2"
         ExecStop=/bin/bash -c "/sbin/ip link del $iface_name"
 
         [Install]
-        #WantedBy=sys-subsystem-net-devices-bond0.device
+        #WantedBy=sys-subsystem-net-devices-$PARENT_DEVICE.device
         WantedBy=multi-user.target
 	END
 	)
@@ -175,6 +176,7 @@ process_set () {
 	container_exists $container_name $remote;
 	service_name="lxd-net-$container_name.service"
 	iface_name="lxd-$container_name"
+	iface_name=${iface_name:0:15}
 
 	if [ "$only_host" -eq "0" ]; then
 	    ip_is_valid $ip;

@@ -1,57 +1,81 @@
 #!/bin/bash
 #
-# script for moving a container from or to a remote server and
+# script for moving a container to a remote server and
 # restoring network settings if set up using the lxc-ip script.
 #
-# lxc-migrate [remote:]<container> [remote:]<container> [options]
+# depends:
+#     lxc-dump         on host
+#     lxc-restore      on remote
+#     lxc-ip           on remote
+#
+# lxc-migrate <container> <remote>
 #
 # Autor: Henryk Iwaniuk
 
-c1=""  # full name of container to be moved
-c_ip=""  # ip to be reapplied to moved container
-c2=""  # full name of destination container
-
-get_ip_of_container () {
-	c_ip=$(lxc list $1 --format="csv" | awk -F "\"*,\"*" '{print $3}' | cut -f1 -d" ");
+echoerr () {
+    echo "error: $@" 1>&2;
 }
 
-c_start () {
-	lxc start $1;
+random-string () {
+    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w ${1:-32} | head -n 1
 }
 
-c_stop () {
-	lxc stop $1;
-}
-
-c_move () {
-	lxc move $1 $2;
-}
-
-process_input () {
-	c1=$1;
-	c2=$2;
-	echo "get ip"
-	get_ip_of_container $c1;
-	echo "unset ip"
-	lxc-ip unset $c1;
-	echo "stop c"
-	c_stop $c1;
-	echo "move"
-	c_move $c1 $c2;
-
-	if [ -z "$c_ip" ]
-	then
-		echo "not creating a network";
-	else
-		lxc-ip set $c2 $c_ip;
+container_is_running () {
+	c_running=$(lxc list --format csv -c n,s | grep RUNNING | grep $1)
+	if [ -z "$c_running" ]; then
+		return 0;
 	fi
-
-	if [ "$3" != "-s" ]
-	then
-		c_start $c2;
-	fi
-
+	return 1;
 }
 
-process_input $1 $2;
+stop_container_if_running () {
+    container_is_running $1;
+    if [ $? -eq 1 ];
+    then
+        was_running=1;
+        echo "stopping container $1";
+        lxc stop $1
+    fi
+}
 
+delete_local_container () {
+    echo "deleting container $container_name";
+    lxc delete $container_name;
+}
+
+cleanup () {
+    rm /tmp/lxd_dump/$filename;
+}
+
+container_name=$1
+remote=$2
+
+filename=lxd_dump_"$container_name"_$(random-string 10).tar.gz
+
+mkdir -p /tmp/lxd_dump;
+
+stop_container_if_running $container_name;
+lxc-dump $container_name /tmp/lxd_dump $filename;
+
+if [ ! -f /tmp/lxd_dump/$filename ]; then
+    echoerr "dump file not created.";
+    exit 11;
+fi
+
+scp /tmp/lxd_dump/$filename $remote:/tmp/
+
+if [ $? -ne 0 ]; then
+    echoerr "copy failed. exit.";
+    exit 22;
+fi
+
+ssh -t $remote "echo 'enter root password for remote'; su - root -c \"lxc-restore /tmp/$filename $container_name; if [ \$? -ne 0 ]; then exit 66; fi; lxc-ip -l set $container_name\"; rm /tmp/$filename";
+
+if [ $? -ne 0 ]; then
+    cleanup;
+    echoerr "restore on remote failed. exit.";
+    exit 33;
+fi
+
+delete_local_container;
+cleanup;

@@ -19,6 +19,9 @@ die () {
     exit 1
 }
 
+POOL_NAME="default"
+VG_NAME="lxc-$HOSTNAME"
+
 container=
 size=
 lvm_block=
@@ -99,16 +102,16 @@ container_exists () {
 }
 
 set_lvm_block () {
-    lvm_block="/dev/lxc/containers_$container"
+    lvm_block="/dev/$VG_NAME/containers_$container"
 }
 
 set_mountpoint () {
-    mountpoint="/var/lib/lxd/storage-pools/lxc/containers/$container"
+    mountpoint="/var/lib/lxd/storage-pools/$POOL_NAME/containers/$container"
 }
 
 container_set_size () {
     printf "trying to set a new root device\n";
-    lxc config device add $container root disk pool=lxc path=/ size=$size
+    lxc config device add $container root disk pool=$POOL_NAME path=/ size=$size
     if [ $? -ne 0 ]; then
             printf "trying to change existing root device instead\n";
             lxc config device set $container root size $size

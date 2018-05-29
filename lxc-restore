@@ -2,12 +2,20 @@
 #
 # Autor: Henryk Iwaniuk
 
-# TODO tar allow relative path
-# TODO create individual mount points to allow parallel runs with different containers
-# TODO allow changing name and ip on restore
+# TODO allow changing ip on restore
 
 
 # Usage info
+
+die () {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+random-string () {
+    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w ${1:-32} | head -n 1
+}
+
 show_help () {
 cat << EOF
 Usage: ${0##*/} <tar-file> <container-name>
@@ -21,6 +29,10 @@ EOF
 container=
 size=
 tar_file=
+
+mnt_path=/tmp/lxc_restore_$(random-string 10)
+POOL_NAME="default"
+VG_NAME="lxc-$HOSTNAME"
 
 while :; do
     case $1 in
@@ -36,7 +48,7 @@ while :; do
                 die 'ERROR: <tar-file> and <container-name> arguments expected'
             fi
             container=$2
-            tar_file=$1
+            tar_file=$(realpath $1)
             shift
             ;;
         -?*)
@@ -49,30 +61,102 @@ while :; do
     shift
 done
 
+if [ -z "$container" ]; then
+    show_help
+    die "ERROR: no container name set.";
+fi
+
+if [ -z "$tar_file" ]; then
+    show_help
+    die "ERROR: tar file expected.";
+fi
+
+if [ ! -f $tar_file ]; then
+    die "ERROR: file does not exist.";
+fi
 
 get_size () {
-    tar -zxvf "$tar_file" ./backup.yaml
-    size=$(cat backup.yaml | grep root -A 10 | grep "GB" | tail -1 | awk -F " " '{print $2}')
+    mkdir -p "$mnt_path";
+    tar -zxvf "$tar_file" -C $mnt_path "./backup.yaml" > /dev/null
+    size=$(cat "$mnt_path/backup.yaml" | grep root -A 10 | grep "GB" | tail -1 | awk -F " " '{print $2}')
+    rm "$mnt_path/*"
 }
 
 create_lv () {
-    lvcreate --thin lxc/LXDThinpool -V "$size" -n "containers_"$container"_restore"
+    lvcreate --thin "$VG_NAME/LXDThinpool" -V "$size" -n "containers_"$container"_restore" > /dev/null
+    if [ $? -ne 0 ]; then
+        die "lv creation failed. exit.";
+    fi
 }
 
 fill_lv () {
-    mkfs.xfs "/dev/lxc/containers_"$container"_restore"
-    mkdir /tmp/restore_mount
-    mount "/dev/lxc/containers_"$container"_restore" /tmp/restore_mount
-    cd /tmp/restore_mount
+    mkfs.xfs "/dev/$VG_NAME/containers_"$container"_restore" > /dev/null
+    mkdir -p "$mnt_path"
+    mount "/dev/$VG_NAME/containers_"$container"_restore" "$mnt_path"
+    cd "$mnt_path"
     printf "extracting tarball. this might take a while..."
-    tar -xf "$tar_file"
+    tar -xf "$tar_file" > /dev/null
     cd ../
-    umount /tmp/restore_mount
+    umount "$mnt_path"
+}
+
+parse_backup_yaml () {
+    INTERFACE_NAME="lxd-$container"
+    INTERFACE_NAME=${INTERFACE_NAME:0:15}
+
+    file_path="/var/lib/lxd/storage-pools/$POOL_NAME/containers/$container/backup.yaml";
+
+    if [ ! -f $file_path ]; then
+            echo "error: file not valid.";
+            exit 11;
+    fi
+
+    section=''
+    filestring=''
+
+    IFS=''
+    while read l; do
+
+        if [[ $l =~ ^[^[:space:]][A-Za-z]* ]]; then
+                filestring="$filestring$l\n";
+                section="$BASH_REMATCH";
+                continue;
+        fi
+        if [ -z "$section" ]; then
+                filestring="$filestring$l\n";
+                continue;
+        fi
+
+        new_l=$l
+
+        # replace stuff that has to change in every section
+        new_l=$(printf "$new_l" | sed "s/pool: .*/pool: $POOL_NAME/");
+        new_l=$(printf "$new_l" | sed "s/lvm.vg_name: .*/lvm.vg_name: $VG_NAME/");
+        new_l=$(printf "$new_l" | sed "s/parent: lxd-.*/parent: $INTERFACE_NAME/");
+
+        # depends on section
+        if [ "$section" == "container" ]; then
+                new_l=$(printf "$new_l" | sed "s/^  name: .*/  name: $container/");
+        fi
+
+        if [ "$section" == "volume" ]; then
+                new_l=$(printf "$new_l" | sed "s/^  name: .*/  name: $container/");
+        fi
+
+        if [ "$section" == "pool" ]; then
+                new_l=$(printf "$new_l" | sed "s/name: .*/name: $POOL_NAME/");
+        fi
+
+        filestring="$filestring$new_l\n";
+    done <<< "$(cat $file_path)"
+
+    printf "$filestring" > $file_path;
+
 }
 
 prepare_env () {
-    mkdir "/var/lib/lxd/storage-pools/lxc/containers/$container"
-    mount /dev/lxc/containers_guest21_restore /var/lib/lxd/storage-pools/lxc/containers/guest21
+    mkdir "/var/lib/lxd/storage-pools/$POOL_NAME/containers/$container"
+    mount "/dev/$VG_NAME/containers_"$container"_restore" "/var/lib/lxd/storage-pools/$POOL_NAME/containers/$container"
 }
 
 lxd_import () {
@@ -80,8 +164,8 @@ lxd_import () {
 }
 
 post_import () {
-    lvrename "/dev/lxc/containers_"$container"_restore" "/dev/lxc/containers_$container"
-    ln -s "/var/lib/lxd/storage-pools/lxc/containers/$container" "/var/lib/lxd/containers/$container"
+    lvrename "/dev/$VG_NAME/containers_"$container"_restore" "/dev/$VG_NAME/containers_$container" > /dev/null
+    ln -s "/var/lib/lxd/storage-pools/$POOL_NAME/containers/$container" "/var/lib/lxd/containers/$container"
     lxc-ip -l set "$container"
 }
 
@@ -90,6 +174,7 @@ main () {
     create_lv
     fill_lv
     prepare_env
+    parse_backup_yaml
     lxd_import
     post_import
 }
