@@ -1,6 +1,8 @@
 # LXD-Suite
 LXD Management Scripts
 
+** Warning: these scripts only works with lvm storage, where the VG is named lxc-$hostname **
+
 ### Installing
 put the scripts somewhere in your $PATH (e.g. /usr/local/bin) and make them executable.
 
