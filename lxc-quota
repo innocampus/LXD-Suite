@@ -137,6 +137,10 @@ else
     set_lvm_block;
     set_mountpoint;
 
+    if [ -f $mountpoint/size.bak ]; then
+        rm "$mountpoint/size.bak";
+    fi
+
     lvextend -L $size $lvm_block
     update_container_config;
     e2fsck -f $lvm_block

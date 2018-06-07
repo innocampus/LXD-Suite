@@ -77,9 +77,24 @@ fi
 
 get_size () {
     mkdir -p "$mnt_path";
-    tar -zxvf "$tar_file" -C $mnt_path "./backup.yaml" > /dev/null
-    size=$(cat "$mnt_path/backup.yaml" | grep root -A 10 | grep "GB" | tail -1 | awk -F " " '{print $2}')
-    rm "$mnt_path/*"
+    tar -zxvf "$tar_file" -C $mnt_path "size.bak" > /dev/null
+    size=$(cat "$mnt_path/size.bak")
+
+    if [ -z $size ] || [[ ! $size =~ ^[0-9]*GB$ ]]; then
+	read -p "The Container does not have a size set. set a size? [Y/n]" -n 1 -r;
+	if [[ $REPLY =~ ^[Yy]$ ]]; then
+		REPLY=
+		echo ""
+		while [[ ! $REPLY =~ ^[0-9]*GB$ ]]; do
+			read -p "Enter size for root device (e.g. 20GB): "
+			size="$REPLY"
+		done
+	fi
+
+	if [ -z $size ]; then
+	    die "ERROR: no size set";
+	fi
+fi
 }
 
 create_lv () {

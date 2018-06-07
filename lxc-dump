@@ -16,6 +16,10 @@ Example:
 EOF
 }
 
+random_string () {
+    cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w ${1:-32} | head -n 1
+}
+
 container_exists () {
 	c_exists=$(lxc list $1 | awk -v cont=$1 '($2==cont) {print $2}')
 	if [ -z "$c_exists" ]; then
@@ -61,12 +65,16 @@ sDatum=`date +%Y_%m_%d-%H_%M_%S`;
 hostname=$(hostname);
 storage_pool_name="default";
 path_to_private="/var/lib/lxd/storage-pools/$storage_pool_name/containers";
-path_to_vg="/dev/lxc-$hostname"
+vg_name="lxc-$hostname"
+path_to_vg="/dev/$vg_name"
 default_path="."
 
 container_name=$1;
 container_exists $container_name;
 
+sizefile="$path_to_private/$container_name/size.bak"
+sizefile_tmp_dir="/tmp/lxc_dump_$(random_string 10)"
+tmp_sizefile=""
 
 if [ -z "$2" ];
 then
@@ -93,9 +101,27 @@ echo "Creating dump for container $container_name in $path";
 stop_container_if_running $container_name;
 
 mount -o ro $path_to_vg/containers_$container_name $path_to_private/$container_name;
+
+if [ $? -ne 0 ]; then
+    echoerr "could not mount container.";
+    exit 77;
+fi
+
+# check size, create sizefile if not present.
+size=$(cat $sizefile)
+if [ $? -ne 0 ] || [ -z $size ]; then
+    mkdir -p "$sizefile_tmp_dir"
+    echo "sizefile does not exist or is not set. creating sizefile.";
+    size=$(lvdisplay -C --noheadings --units g -o "lv_size"  $vg_name/containers_$container_name | sed "s/g/GB/" | sed "s/\.[0-9]*//" | sed "s/[ ]*//");
+    echo "$size" > "$sizefile_tmp_dir/size.bak"
+    tmp_sizefile="$sizefile_tmp_dir/size.bak"
+fi
+
 cd $path_to_private/$container_name;
+ls;
 echo "Compressing container. This might take a while...";
-tar cf -  --preserve-permissions --numeric-owner . | pigz -c  > $path/$filename
+echo "$tmp_sizefile"
+tar cf -  --preserve-permissions --numeric-owner . -C "$sizefile_tmp_dir" "size.bak" | pigz -c  > $path/$filename
 cd
 umount $path_to_private/$container_name;
 
